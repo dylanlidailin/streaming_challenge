@@ -1,0 +1,8 @@
+quixstreams
+requests
+pandas
+redis
+python-dotenv
+pytrends
+scikit-learn
+streamlit

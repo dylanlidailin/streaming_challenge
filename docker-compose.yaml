@@ -1,0 +1,39 @@
+version: '3.8'
+
+services:
+  # --- BROKER (Redpanda) ---
+  redpanda:
+    image: docker.redpanda.com/redpandadata/redpanda:v25.1.3
+    container_name: redpanda-mega
+    command:
+      - redpanda
+      - start
+      - --kafka-addr internal://0.0.0.0:9092,external://0.0.0.0:19092
+      - --advertise-kafka-addr internal://redpanda:9092,external://localhost:19092
+      - --pandaproxy-addr internal://0.0.0.0:8082,external://0.0.0.0:18082
+      - --advertise-pandaproxy-addr internal://redpanda:8082,external://localhost:18082
+      - --schema-registry-addr internal://0.0.0.0:8081,external://0.0.0.0:18081
+      - --mode dev-container
+    ports:
+      - 18081:18081
+      - 18082:18082
+      - 19092:19092
+      - 19644:9644
+
+  # --- CACHE (Redis) ---
+  redis:
+    image: redis:latest
+    container_name: redis-mega
+    ports:
+      - 6379:6379
+
+  # --- DASHBOARD (Redpanda Console) ---
+  console:
+    image: docker.redpanda.com/redpandadata/console:v3.1.0
+    container_name: console-mega
+    environment:
+      KAFKA_BROKERS: redpanda:9092
+    ports:
+      - 8080:8080
+    depends_on:
+      - redpanda
