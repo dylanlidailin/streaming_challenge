@@ -24,7 +24,11 @@ IMDB_BASICS_FILE = os.getenv("IMDB_BASICS_FILE", os.path.join(DATA_DIR, "title.b
 
 # Show selection configuration
 NUM_NETFLIX_SHOWS = int(os.getenv("NUM_SHOWS", "200"))
-SLEEP_BETWEEN_YEARS = int(os.getenv("SLEEP_BETWEEN_YEARS", "2"))
+# Increased default to 10s. MUST be set to 30s or more in .env for stability.
+SLEEP_BETWEEN_YEARS = int(os.getenv("SLEEP_BETWEEN_YEARS", "10")) 
+
+# --- RATE LIMIT FIX: Add a substantial delay between processing each show
+RATE_LIMIT_DELAY_SECONDS = 15 
 
 # Manual supplemental shows list
 SUPPLEMENTAL_SHOWS = [
@@ -108,7 +112,7 @@ class TrendsFetcher:
     """Fetches historical Google Trends data."""
     
     def __init__(self):
-        self.pytrends = TrendReq(hl='en-US', tz=360, timeout=(10, 25))
+        self.pytrends = TrendReq(hl='en-US', tz=360, timeout=(30, 60)) # Increased timeout for robustness
 
     def fetch_history(self, show_title: str) -> List[Dict]:
         """Fetches 5 years of daily data."""
@@ -133,11 +137,14 @@ class TrendsFetcher:
                             "hype_score": int(row[show_title])
                         })
                 
+                # Use the environment variable for sleep between years
                 time.sleep(SLEEP_BETWEEN_YEARS)
                 
             except Exception as e:
                 logging.warning(f"   Failed to fetch {period} for {show_title}: {e}")
-                time.sleep(5)
+                # FIX: Increased backoff time on failure to 30 seconds
+                logging.info(f"   ⚠️ Rate Limit hit. Waiting 30s to clear rate limit...")
+                time.sleep(30) 
         
         return all_data
 
@@ -180,7 +187,8 @@ def main_loop():
     fetcher = TrendsFetcher()
 
     logging.info(f"🚀 Starting PHASE 1: Historical Backfill for {len(shows)} shows...")
-    logging.info(f"📊 This will take 8-16 hours. Each show requires ~5 API calls.")
+    logging.info(f"📊 This will take a while. Each show requires ~5 API calls.")
+    logging.info(f"🐌 **RATE LIMITING FIX**: Sleeping for {RATE_LIMIT_DELAY_SECONDS}s between shows.")
     
     success_count = 0
     failure_count = 0
@@ -193,6 +201,11 @@ def main_loop():
             success_count += 1
         else:
             failure_count += 1
+
+        # --- FIX: Add substantial delay between shows ---
+        logging.info(f"    ...sleeping for {RATE_LIMIT_DELAY_SECONDS}s to respect Google Trends rate limits.")
+        time.sleep(RATE_LIMIT_DELAY_SECONDS)
+        # ----------------------------------------------
     
     logging.info("=" * 60)
     logging.info("🎉 PHASE 1 COMPLETE!")
