@@ -1,25 +1,17 @@
-# Single Dockerfile used for both producer & consumer & app (different CMD in docker-compose)
-FROM python:3.11-slim
-
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
+FROM python:3.9-slim
 
 WORKDIR /app
 
-# system deps for pytrends & pandas; increase as needed
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
-
-COPY requirements.txt /app/requirements.txt
+# Install dependencies
+COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-RUN pip install --upgrade pip setuptools wheel
-RUN pip install -r requirements.txt
+# Copy application code
+COPY producer_integrated.py .
+COPY producer_streaming.py .
+COPY consumer.py .
+COPY app_enhanced.py .
+COPY .env .
 
-# copy code
-COPY . /app
-
-# default entrypoint can be overridden in docker-compose
-ENTRYPOINT ["python"]
+# Default command (override in docker-compose)
+CMD ["python", "consumer.py"]

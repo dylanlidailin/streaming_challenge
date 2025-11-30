@@ -1,63 +1,82 @@
-version: "3.8"
+version: '3.8'
 
 services:
   redis:
     image: redis:7-alpine
-    container_name: redis-main
+    container_name: streaming-wars-redis
     ports:
       - "6379:6379"
     volumes:
-      - redis_data:/data
+      - redis-data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
 
-  producer:
+  # PHASE 1: Historical Backfill Producer
+  # Uncomment this service during Phase 1
+  producer-batch:
     build: .
-    container_name: streaming_producer
-    command: ["producer.py"]
-    environment:
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-      - NUM_SHOWS=200
-      - PYTRENDS_BATCH_SIZE=5
-      - MAX_WORKERS=6
-      - DATA_DIR=/data
-      - NETFLIX_FILE=/data/netflix_titles.csv
-      - IMDB_RATINGS_FILE=/data/title.ratings.tsv.gz
-      - IMDB_BASICS_FILE=/data/title.basics.tsv.gz
+    container_name: streaming-wars-producer-batch
+    command: python producer_integrated.py
+    depends_on:
+      redis:
+        condition: service_healthy
     volumes:
       - ./data:/data
-    depends_on:
-      - redis
+    environment:
+      - REDIS_HOST=redis
+      - NUM_SHOWS=200
+      - SLEEP_BETWEEN_YEARS=2
+    # Comment out this service after Phase 1 completes
+    # profiles: ["phase1"]
+
+  # PHASE 2: Real-Time Streaming Producer
+  # Uncomment this service during Phase 2
+  # producer-stream:
+  #   build: .
+  #   container_name: streaming-wars-producer-stream
+  #   command: python producer_streaming.py
+  #   depends_on:
+  #     redis:
+  #       condition: service_healthy
+  #   volumes:
+  #     - ./data:/data
+  #   environment:
+  #     - REDIS_HOST=redis
+  #     - STREAM_INTERVAL=60
+  #     - BACKFILL_HISTORICAL=false
+  #   profiles: ["phase2"]
 
   consumer:
     build: .
-    container_name: streaming_consumer
-    command: ["consumer.py"]
-    environment:
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-      - POP_BATCH=200
-      - SNAPSHOT_FILE=/data/franchise_data_snapshot.ndjson
+    container_name: streaming-wars-consumer
+    command: python consumer.py
+    depends_on:
+      redis:
+        condition: service_healthy
     volumes:
       - ./data:/data
-    depends_on:
-      - redis
-      - producer
+    environment:
+      - REDIS_HOST=redis
+      - POP_BATCH=200
+      - SNAPSHOT_EVERY=5000
+    restart: unless-stopped
 
-  app:
+  dashboard:
     build: .
-    container_name: streaming_app
-    command: ["streamlit", "run", "app.py", "--server.port=8501", "--server.address=0.0.0.0"]
+    container_name: streaming-wars-dashboard
+    command: streamlit run app_enhanced.py --server.port=8501 --server.address=0.0.0.0
     ports:
       - "8501:8501"
+    depends_on:
+      redis:
+        condition: service_healthy
     environment:
       - REDIS_HOST=redis
-      - REDIS_PORT=6379
-      - DATA_DIR=/data
-    volumes:
-      - ./data:/data
-    depends_on:
-      - redis
-      - consumer
+    restart: unless-stopped
 
 volumes:
-  redis_data:
+  redis-data:
