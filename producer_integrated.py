@@ -28,7 +28,7 @@ NUM_NETFLIX_SHOWS = int(os.getenv("NUM_SHOWS", "200"))
 SLEEP_BETWEEN_YEARS = int(os.getenv("SLEEP_BETWEEN_YEARS", "10")) 
 
 # --- RATE LIMIT FIX: Add a substantial delay between processing each show
-RATE_LIMIT_DELAY_SECONDS = 15 
+RATE_LIMIT_DELAY_SECONDS = 12
 
 # Manual supplemental shows list
 SUPPLEMENTAL_SHOWS = [
@@ -115,36 +115,34 @@ class TrendsFetcher:
         self.pytrends = TrendReq(hl='en-US', tz=360, timeout=(30, 60)) # Increased timeout for robustness
 
     def fetch_history(self, show_title: str) -> List[Dict]:
-        """Fetches 5 years of daily data."""
-        timeframes = [
-            '2020-01-01 2020-12-31', 
-            '2021-01-01 2021-12-31',
-            '2022-01-01 2022-12-31', 
-            '2023-01-01 2023-12-31',
-            '2024-01-01 2024-12-31'
-        ]
+        """
+        Fetches 5 years of data in ONE request.
+        Returns WEEKLY data, which allows for consistent scaling across the full period.
+        """
+        # We fetch the full 5-year range in one go.
+        # This forces Google to normalize 2020 vs 2024 correctly.
+        full_timeframe = '2020-01-01 2024-12-31'
         
         all_data = []
-        for period in timeframes:
-            try:
-                self.pytrends.build_payload([show_title], cat=0, timeframe=period)
-                data = self.pytrends.interest_over_time()
-                
-                if not data.empty and show_title in data.columns:
-                    for ts, row in data.iterrows():
-                        all_data.append({
-                            "timestamp": int(ts.timestamp()),
-                            "hype_score": int(row[show_title])
-                        })
-                
-                # Use the environment variable for sleep between years
-                time.sleep(SLEEP_BETWEEN_YEARS)
-                
-            except Exception as e:
-                logging.warning(f"   Failed to fetch {period} for {show_title}: {e}")
-                # FIX: Increased backoff time on failure to 30 seconds
-                logging.info(f"   ⚠️ Rate Limit hit. Waiting 30s to clear rate limit...")
-                time.sleep(30) 
+        try:
+            logging.info(f"   ...fetching full history ({full_timeframe})")
+            self.pytrends.build_payload([show_title], cat=0, timeframe=full_timeframe)
+            data = self.pytrends.interest_over_time()
+            
+            if not data.empty and show_title in data.columns:
+                for ts, row in data.iterrows():
+                    all_data.append({
+                        "timestamp": int(ts.timestamp()),
+                        "hype_score": int(row[show_title])
+                    })
+            
+            # Since we only make 1 request per show now, a short sleep is sufficient
+            time.sleep(2)
+            
+        except Exception as e:
+            logging.warning(f"   Failed to fetch history for {show_title}: {e}")
+            logging.info(f"   ⚠️ Rate Limit hit. Waiting 30s...")
+            time.sleep(30)
         
         return all_data
 

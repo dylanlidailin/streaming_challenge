@@ -1,17 +1,5 @@
 """
-consumer.py
-
-- Consumes events from Redis list 'franchise_queue' (producer RPUSHes).
-- Processes / enriches records (basic sanity checks, fill defaults).
-- Stores processed records into Redis list 'franchise_data' (final storage for app).
-- Periodically persists snapshots to disk (data/franchise_data_snapshot.ndjson) for durability.
-- This consumer is intentionally simple; it's easy to extend with:
-    - dedup logic, schema validation, more enrichment (e.g., lookup external API),
-    - or writing to a DB (Postgres/ClickHouse) if you prefer.
-
-Config:
-- REDIS_HOST, REDIS_PORT env vars
-- BATCH_POP: how many items to pop each loop (defaults to 500)
+consumer.py - Updated to include brand_equity
 """
 
 import os
@@ -30,7 +18,7 @@ REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
 REDIS_QUEUE = os.getenv("REDIS_QUEUE", "franchise_queue")
 REDIS_DATA_LIST = os.getenv("REDIS_DATA_LIST", "franchise_data")
 POP_BATCH = int(os.getenv("POP_BATCH", "200"))
-SNAPSHOT_EVERY = int(os.getenv("SNAPSHOT_EVERY", "5000"))  # save to disk after this many processed
+SNAPSHOT_EVERY = int(os.getenv("SNAPSHOT_EVERY", "5000")) 
 
 DATA_SNAPSHOT_FILE = os.getenv("SNAPSHOT_FILE", "/data/franchise_data_snapshot.ndjson")
 
@@ -48,20 +36,30 @@ def enrich_record(event: Dict[str, Any]) -> Dict[str, Any]:
     ts = event.get("timestamp") or int(time.time())
     title = event.get("title") or (event.get("metrics", {}).get("title")) or "Unknown"
     metrics = event.get("metrics", {})
-    # ensure numeric types and defaults
+    
+    # Ensure numeric types and defaults
     hype = float(metrics.get("hype_score") or 0.0)
+    
+    # --- FIX START: Extract brand_equity ---
+    brand_equity = int(metrics.get("brand_equity") or 0)
+    # --- FIX END ---
+
     imdb_rating = metrics.get("imdb_rating")
     try:
         imdb_rating = float(imdb_rating) if imdb_rating is not None else None
     except Exception:
         imdb_rating = None
+        
     netflix_hours = float(metrics.get("netflix_hours") or 0.0)
-    # compute a simple "engagement_score" arbitrarily as hype * (imdb_rating or 5)/10
+    
+    # Compute engagement score
     engagement = hype * ((imdb_rating or 5.0) / 10.0)
+    
     out = {
         "timestamp": int(ts),
         "title": title,
         "hype_score": round(hype, 3),
+        "brand_equity": brand_equity,  # <--- Field added here
         "imdb_rating": imdb_rating,
         "netflix_hours": netflix_hours,
         "engagement_score": round(engagement, 4)
@@ -69,7 +67,6 @@ def enrich_record(event: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 def pop_batch(n: int) -> List[str]:
-    # Use BRPOP with timeout 1 to collect items - faster to pop one-by-one in a loop
     items = []
     for _ in range(n):
         raw = r.lpop(REDIS_QUEUE)
