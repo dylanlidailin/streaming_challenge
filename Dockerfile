@@ -1,28 +1,25 @@
-# Use the same base image as the repo
-FROM python:3.12.5-slim-bookworm
+# Single Dockerfile used for both producer & consumer & app (different CMD in docker-compose)
+FROM python:3.11-slim
 
-# Set env vars to keep Python happy in Docker
-ENV DEBIAN_FRONTEND=noninteractive \
-    PYTHONUNBUFFERED=1 \
-    PYTHONIOENCODING=UTF-8 \
-    PYTHONPATH="/app"
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-# Install system dependencies (needed for some python packages)
-RUN apt-get update && apt-get install -y \
+# system deps for pytrends & pandas; increase as needed
+RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     curl \
-    git \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements first to leverage Docker cache
-COPY requirements.txt .
+COPY requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application code
-COPY . .
+RUN pip install --upgrade pip setuptools wheel
+RUN pip install -r requirements.txt
 
-# Default command: This serves as a default, but you will likely 
-# override this when running specific scripts locally.
-CMD ["python3", "producer.py"]
+# copy code
+COPY . /app
+
+# default entrypoint can be overridden in docker-compose
+ENTRYPOINT ["python"]

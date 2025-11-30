@@ -1,217 +1,231 @@
+"""
+producer.py
+
+- Loads Netflix + IMDb CSVs from ./data (see README notes below).
+- Builds (or reads) a list of N shows (default 200).
+- Uses pytrends to request Google Trends data in BATCHES of up to 5 keywords per payload.
+- Uses ThreadPoolExecutor to parallelize batch requests.
+- Creates a metrics JSON per show and RPUSHes into Redis list 'franchise_queue'.
+
+Config:
+- Provide REDIS_HOST/REDIS_PORT via environment or .env (defaults below).
+- Provide path to data files (netflix_titles.csv, title.ratings.tsv.gz, title.basics.tsv.gz).
+- Provide optional shows_list.txt (one title per line). If not present, code selects first 200 unique shows
+  from netflix_titles.csv.
+
+Notes:
+- pytrends backoff: Google Trends can throttle; code retries on errors with small backoff.
+- If pytrends is blocked (network, captcha), the producer will still push records with 0 hype_score and
+  available metadata (IMDB rating, estimated hours).
+"""
+
 import os
 import time
 import json
-import requests
-import pandas as pd
-from quixstreams import Application
-from dotenv import load_dotenv
-from pytrends.request import TrendReq
+import math
+import random
+import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import List, Dict
+
+import redis
+import pandas as pd
+from pytrends.request import TrendReq
+from dotenv import load_dotenv
 
 load_dotenv()
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
-# --- CONFIGURATION (PROJECT 1) ---
-# Using Default Ports for Project 1
-KAFKA_BROKER = "localhost:19092"
-TOPIC_NAME = "stranger_things_data"
-TRAKT_CLIENT_ID = os.getenv("TRAKT_CLIENT_ID")
-TMDB_API_KEY = os.getenv("TMDB_API_KEY")
+REDIS_HOST = os.getenv("REDIS_HOST", "redis")
+REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
+REDIS_QUEUE = os.getenv("REDIS_QUEUE", "franchise_queue")
 
-if not TRAKT_CLIENT_ID or not TMDB_API_KEY:
-    raise ValueError("❌ Missing API Keys! Check your .env file.")
+DATA_DIR = os.getenv("DATA_DIR", "/data")  # in docker container mount to /data
+NETFLIX_FILE = os.getenv("NETFLIX_FILE", os.path.join(DATA_DIR, "netflix_titles.csv"))
+IMDB_RATINGS_FILE = os.getenv("IMDB_RATINGS_FILE", os.path.join(DATA_DIR, "title.ratings.tsv.gz"))
+IMDB_BASICS_FILE = os.getenv("IMDB_BASICS_FILE", os.path.join(DATA_DIR, "title.basics.tsv.gz"))
+SHOWS_LIST_FILE = os.getenv("SHOWS_LIST_FILE", os.path.join(DATA_DIR, "shows_list.txt"))
 
-# Focused List for Deep Analysis
-SHOW_NAMES = [
-    "Stranger Things", 
-    "Wednesday", 
-    "The Last of Us", 
-    "Bridgerton", 
-    "Severance",
-    "Squid Game",
-    "The Crown",
-    "Game of Thrones"
-]
+NUM_SHOWS = int(os.getenv("NUM_SHOWS", "200"))
+BATCH_SIZE = int(os.getenv("PYTRENDS_BATCH_SIZE", "5"))  # pytrends supports up to 5 keywords per payload
+MAX_WORKERS = int(os.getenv("MAX_WORKERS", "6"))
+SLEEP_BETWEEN_CYCLES = int(os.getenv("PRODUCER_SLEEP", "60"))  # seconds
 
-class StrangerThingsStreamer:
-    def __init__(self):
-        self.app = Application(
-            broker_address=KAFKA_BROKER,
-            consumer_group="project1-producer-turbo",
-            producer_extra_config={"broker.address.family": "v4"}
-        )
-        self.topic = self.app.topic(name=TOPIC_NAME, value_serializer="json")
-        self.resolved_shows = []
-        self.netflix_df = None
-        print(f"🚀 Project 1 Producer Connected to {KAFKA_BROKER}")
+def load_shows_list() -> List[str]:
+    """Return a list of shows to query (length NUM_SHOWS). Priority:
+       1) shows_list.txt if exists
+       2) netflix_titles.csv first NUM_SHOWS unique titles
+    """
+    if os.path.exists(SHOWS_LIST_FILE):
+        logging.info("Loading shows from shows_list.txt")
+        with open(SHOWS_LIST_FILE, "r", encoding="utf-8") as f:
+            titles = [l.strip() for l in f if l.strip()]
+            return titles[:NUM_SHOWS]
 
-    def resolve_show_metadata(self, title):
-        """Auto-finds TMDB ID, Trakt Slug, and IMDb ID."""
-        search_url = f"https://api.themoviedb.org/3/search/tv?api_key={TMDB_API_KEY}&query={title}"
+    # fallback to netflix_titles.csv
+    if os.path.exists(NETFLIX_FILE):
+        logging.info("Loading shows from netflix_titles.csv")
+        df = pd.read_csv(NETFLIX_FILE)
+        # Prefer titles where type == TV Show, but fall back to ALL
+        if "type" in df.columns:
+            tv = df[df["type"].str.lower().str.contains("tv", na=False)]
+            candidates = tv["title"].dropna().unique().tolist()
+            if len(candidates) < NUM_SHOWS:
+                candidates = list(df["title"].dropna().unique())  # fallback to all titles
+        else:
+            candidates = list(df["title"].dropna().unique())
+        return candidates[:NUM_SHOWS]
+
+    logging.warning("No shows file found; generating dummy show names")
+    return [f"Show {i+1}" for i in range(NUM_SHOWS)]
+
+def load_imdb_data() -> pd.DataFrame:
+    """Load imdb basics and ratings to produce imdb_rating and runtime approximation"""
+    ratings = None
+    basics = None
+    if os.path.exists(IMDB_RATINGS_FILE):
         try:
-            res = requests.get(search_url).json()
-            if res.get('results'):
-                top = res['results'][0]
-                tmdb_id = top['id']
-                
-                # Get External IDs (IMDb)
-                ext_url = f"https://api.themoviedb.org/3/tv/{tmdb_id}/external_ids?api_key={TMDB_API_KEY}"
-                ext_res = requests.get(ext_url).json()
-                
-                return {
-                    "title": top['name'],
-                    "tmdb_id": tmdb_id,
-                    "imdb_id": ext_res.get('imdb_id'),
-                    "slug": top['name'].lower().replace(' ', '-').replace(':', '').replace("'", "")
-                }
-        except: pass
-        return None
-
-    # --- DATA SOURCE 1: GOOGLE TRENDS (Smart Backfill) ---
-    def backfill_google_trends(self, show_title):
-        print(f"   🔎 Google Trends (Daily): {show_title}...")
-        # Split into 6-month chunks to force Daily Data without hitting limits
-        timeframes = [
-            '2020-01-01 2020-06-30', '2020-07-01 2020-12-31',
-            '2021-01-01 2021-06-30', '2021-07-01 2021-12-31',
-            '2022-01-01 2022-06-30', '2022-07-01 2022-12-31',
-            '2023-01-01 2023-06-30', '2023-07-01 2023-12-31',
-            '2024-01-01 2024-06-30', '2024-07-01 2024-12-31'
-        ]
-        pytrends = TrendReq(hl='en-US', tz=360)
-        
-        for period in timeframes:
+            ratings = pd.read_csv(IMDB_RATINGS_FILE, sep="\t", compression="gzip", low_memory=False)
+            # imdb ratings file typically has tconst, averageRating, numVotes
+        except Exception:
             try:
-                pytrends.build_payload([show_title], cat=0, timeframe=period)
-                data = pytrends.interest_over_time()
-                if not data.empty:
-                    for index, row in data.iterrows():
-                        event = {
-                            "timestamp": index.timestamp(),
-                            "title": show_title,
-                            "metrics": {
-                                "hype_score": int(row[show_title]),
-                                "active_watchers": 0, "total_plays": 0, 
-                                "brand_equity": 0, "cost_basis": 0, "netflix_hours": 0
-                            }
-                        }
-                        self.publish(key=show_title, data=event)
-                time.sleep(2) # Polite sleep
-            except: pass
-
-    # --- DATA SOURCE 2: NETFLIX OFFICIAL (History) ---
-    def prefetch_netflix_data(self):
-        print("📥 Downloading Netflix Official Dataset...")
+                ratings = pd.read_csv(IMDB_RATINGS_FILE, sep="\t", low_memory=False)
+            except Exception:
+                ratings = None
+    if os.path.exists(IMDB_BASICS_FILE):
         try:
-            url = "https://www.netflix.com/tudum/top10/data/all-weeks-global.tsv"
-            self.netflix_df = pd.read_csv(url, sep='\t')
-            print(f"   ✅ Loaded {len(self.netflix_df)} rows.")
-        except: self.netflix_df = pd.DataFrame()
+            basics = pd.read_csv(IMDB_BASICS_FILE, sep="\t", compression="gzip", low_memory=False)
+        except Exception:
+            try:
+                basics = pd.read_csv(IMDB_BASICS_FILE, sep="\t", low_memory=False)
+            except Exception:
+                basics = None
+    if ratings is not None:
+        ratings = ratings.rename(columns=lambda c: c.strip())
+    if basics is not None:
+        basics = basics.rename(columns=lambda c: c.strip())
+    if basics is not None and ratings is not None:
+        merged = basics.merge(ratings, on="tconst", how="left")
+        # We'll use primaryTitle -> averageRating
+        if "primaryTitle" in merged.columns:
+            merged = merged.rename(columns={"primaryTitle": "title"})
+        return merged
+    return pd.DataFrame()
 
-    def backfill_netflix(self, show_title):
-        if self.netflix_df is None or self.netflix_df.empty: return
+def estimate_hours_from_imdb_row(row) -> float:
+    """Try to estimate total watch hours from IMDb basics (runtimeMinutes or number of episodes).
+       This is approximate and used when netflix_hours isn't available.
+    """
+    try:
+        if "runtimeMinutes" in row and not pd.isna(row["runtimeMinutes"]):
+            mins = float(row["runtimeMinutes"])
+            # assume 1 episode = runtimeMinutes, and assume 8 episodes if not available
+            hours = mins / 60.0
+            # Could multiply by estimated number of episodes — but we keep single episode as conservative
+            return round(hours, 2)
+    except Exception:
+        pass
+    return 0.0
+
+def chunks(lst, n):
+    """Yield successive n-sized chunks from lst."""
+    for i in range(0, len(lst), n):
+        yield lst[i:i + n]
+
+class TrendsBatcher:
+    def __init__(self, batch_size: int = BATCH_SIZE):
+        self.batch_size = batch_size
+        self.pytrends = TrendReq(hl='en-US', tz=360)
+
+    def fetch_batch_interest(self, keywords: List[str]) -> Dict[str, float]:
+        """
+        Fetch interest_over_time for a batch of keywords (<= batch_size).
+        Returns dict {keyword: mean_interest}
+        On error returns zeros for those keywords.
+        """
+        results = {k: 0.0 for k in keywords}
         try:
-            show_data = self.netflix_df[self.netflix_df['show_title'].str.contains(show_title, case=False, na=False)]
-            if not show_data.empty:
-                for _, row in show_data.iterrows():
-                    event = {
-                        "timestamp": pd.to_datetime(row['week']).timestamp(),
-                        "title": show_title,
+            self.pytrends.build_payload(keywords, timeframe='today 12-m')  # last 12 months
+            df = self.pytrends.interest_over_time()
+            if df is None or df.empty:
+                return results
+            # average interest per keyword (drop isPartial column if present)
+            for kw in keywords:
+                if kw in df.columns:
+                    mean_val = float(df[kw].mean())
+                    results[kw] = mean_val
+        except Exception as e:
+            logging.warning("pytrends error for batch %s : %s", keywords, str(e))
+            # if pytrends fails (captcha, blocked) we return zeros - consumer/app can still use other metrics
+        return results
+
+def main_loop():
+    r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=0, decode_responses=True)
+    shows = load_shows_list()
+    NUM = len(shows)
+    logging.info("Using %d shows for streaming.", NUM)
+
+    imdb_df = load_imdb_data()
+    imdb_map = {}
+    if not imdb_df.empty and "title" in imdb_df.columns:
+        # Normalize titles for matching
+        imdb_df['title_norm'] = imdb_df['title'].str.lower().str.strip()
+        imdb_map = imdb_df.set_index('title_norm').to_dict(orient='index')
+
+    batcher = TrendsBatcher(batch_size=BATCH_SIZE)
+
+    # Precompute batches
+    show_batches = list(chunks(shows, BATCH_SIZE))
+    logging.info("Prepared %d batches (batch_size=%d)", len(show_batches), BATCH_SIZE)
+
+    while True:
+        timestamp = int(time.time())
+        # Use ThreadPoolExecutor to parallelize batch requests (each future fetches up to BATCH_SIZE keywords)
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+            future_to_batch = {executor.submit(batcher.fetch_batch_interest, batch): batch for batch in show_batches}
+            for future in as_completed(future_to_batch):
+                batch = future_to_batch[future]
+                try:
+                    batch_results = future.result()
+                except Exception as exc:
+                    logging.exception("Batch fetch failed: %s", exc)
+                    batch_results = {k: 0.0 for k in batch}
+
+                # Build and push events for each show in the batch
+                pipe = r.pipeline()
+                for title in batch:
+                    title_norm = title.lower().strip()
+                    imdb_row = imdb_map.get(title_norm, {})
+                    imdb_rating = None
+                    estimated_hours = 0.0
+                    if imdb_row:
+                        imdb_rating = imdb_row.get('averageRating')
+                        try:
+                            estimated_hours = estimate_hours_from_imdb_row(imdb_row)
+                        except Exception:
+                            estimated_hours = 0.0
+
+                    hype_score = float(batch_results.get(title, 0.0) or 0.0)
+                    # Build metrics record; keep additional fields for later processing
+                    metrics = {
+                        "timestamp": timestamp,
+                        "title": title,
                         "metrics": {
-                            "active_watchers": 0, "total_plays": 0, "hype_score": 0,
-                            "brand_equity": 0, "cost_basis": 0,
-                            "netflix_hours": int(row['weekly_hours_viewed'])
+                            "hype_score": round(hype_score, 3),
+                            "imdb_rating": float(imdb_rating) if imdb_rating else None,
+                            "netflix_hours": estimated_hours,
+                            # placeholders - more fields can be added (cost, brand_equity, total_plays)
+                            "brand_equity": None,
+                            "total_plays": None
                         }
                     }
-                    self.publish(key=show_title, data=event)
-                print(f"      ✅ Netflix History: +{len(show_data)} records")
-        except: pass
+                    pipe.rpush(REDIS_QUEUE, json.dumps(metrics))
+                pipe.execute()
+                logging.info("Pushed %d events for batch (first title: %s)", len(batch), batch[0] if batch else "n/a")
 
-    # --- DATA SOURCE 3: IMDb RATINGS (Massive Volume) ---
-    def backfill_imdb_ratings(self):
-        url = "https://datasets.imdbws.com/title.ratings.tsv.gz"
-        print(f"📥 Downloading IMDb Ratings (Compressed)...")
-        imdb_map = {show['imdb_id']: show['title'] for show in self.resolved_shows if show.get('imdb_id')}
-        
-        try:
-            df = pd.read_csv(url, sep='\t', compression='gzip')
-            matched_df = df[df['tconst'].isin(imdb_map.keys())]
-            
-            if not matched_df.empty:
-                for _, row in matched_df.iterrows():
-                    show_title = imdb_map[row['tconst']]
-                    event = {
-                        "timestamp": time.time(),
-                        "title": show_title,
-                        "metrics": {
-                            "active_watchers": 0, "total_plays": 0, "hype_score": 0,
-                            "brand_equity": int(row['numVotes']), # <--- IMDb Votes
-                            "cost_basis": 0, "netflix_hours": 0
-                        }
-                    }
-                    self.publish(key=show_title, data=event)
-                print(f"      ✅ IMDb: Matched {len(matched_df)} shows!")
-        except: print("      ⚠️ IMDb Download Failed (or skipped)")
+        logging.info("Cycle complete - sleeping %d seconds before next update...", SLEEP_BETWEEN_CYCLES)
+        time.sleep(SLEEP_BETWEEN_CYCLES)
 
-    # --- DATA SOURCE 4: LIVE API (Real-Time) ---
-    def get_live_metrics(self, show):
-        trakt_url = f"https://api.trakt.tv/shows/{show['slug']}/stats"
-        headers = {'Content-Type': 'application/json', 'trakt-api-version': '2', 'trakt-api-key': TRAKT_CLIENT_ID}
-        tmdb_url = f"https://api.themoviedb.org/3/tv/{show['tmdb_id']}?api_key={TMDB_API_KEY}"
-        try:
-            trakt = requests.get(trakt_url, headers=headers).json()
-            tmdb = requests.get(tmdb_url).json()
-            return {
-                "title": show["title"],
-                "active_watchers": trakt.get("watchers", 0),
-                "total_plays": trakt.get("plays", 0),
-                "hype_score": tmdb.get("popularity", 0),
-                "brand_equity": tmdb.get("vote_count", 0),
-                "cost_basis": tmdb.get("number_of_seasons", 1),
-                "netflix_hours": 0
-            }
-        except: return None
-
-    def publish(self, key, data):
-        msg = self.topic.serialize(key=key, value=data)
-        with self.app.get_producer() as producer:
-            producer.produce(topic=self.topic.name, key=msg.key, value=msg.value)
-
-    def run(self):
-        print("📊 Starting Project 1 Turbo-Producer...")
-        self.prefetch_netflix_data()
-        
-        # 1. Metadata
-        print(f"\n--- 1. RESOLVING METADATA ---")
-        with ThreadPoolExecutor(max_workers=5) as executor:
-            future_to_show = {executor.submit(self.resolve_show_metadata, name): name for name in SHOW_NAMES}
-            for future in as_completed(future_to_show):
-                meta = future.result()
-                if meta: self.resolved_shows.append(meta)
-        print(f"   ✓ Resolved {len(self.resolved_shows)} shows.")
-
-        # 2. Backfill
-        print("--- STARTING BACKFILL ---")
-        self.backfill_imdb_ratings() # Huge volume boost
-        for show in self.resolved_shows:
-            self.backfill_netflix(show['title'])
-            self.backfill_google_trends(show['title'])
-        print("--- BACKFILL COMPLETE ---\n")
-
-        # 3. Live Stream
-        print("🔴 Switching to Live Stream Mode...")
-        while True:
-            timestamp = time.time()
-            with ThreadPoolExecutor(max_workers=5) as executor:
-                futures = [executor.submit(self.get_live_metrics, show) for show in self.resolved_shows]
-                for future in as_completed(futures):
-                    metrics = future.result()
-                    if metrics:
-                        event = {"timestamp": timestamp, "title": metrics['title'], "metrics": metrics}
-                        self.publish(key=metrics['title'], data=event)
-            
-            print(f"   ✓ Updated {len(self.resolved_shows)} shows.")
-            time.sleep(60)
 
 if __name__ == "__main__":
-    streamer = StrangerThingsStreamer()
-    streamer.run()
+    main_loop()

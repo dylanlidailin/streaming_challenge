@@ -1,8 +1,7 @@
-quixstreams
-requests
-pandas
-redis
+streamlit>=1.20
+pandas>=2.0
+redis>=4.5
+pytrends>=4.8.0
 python-dotenv
-pytrends
 scikit-learn
-streamlit
+altair
