@@ -15,38 +15,38 @@ services:
 
   # PHASE 1: Historical Backfill Producer
   # Uncomment this service during Phase 1
-  producer-batch:
-    build: .
-    container_name: streaming-wars-producer-batch
-    command: python producer_integrated.py
-    depends_on:
-      redis:
-        condition: service_healthy
-    volumes:
-      - ./data:/data
-    environment:
-      - REDIS_HOST=redis
-      - NUM_SHOWS=200
-      - SLEEP_BETWEEN_YEARS=2
+  #producer-batch:
+  #  build: .
+  #  container_name: streaming-wars-producer-batch
+  #  command: python producer_integrated.py
+  #  depends_on:
+  #    redis:
+  #      condition: service_healthy
+  #  volumes:
+  #    - ./data:/data
+  #  environment:
+  #    - REDIS_HOST=redis
+  #    - NUM_SHOWS=200
+  #    - SLEEP_BETWEEN_YEARS=2
     # Comment out this service after Phase 1 completes
     # profiles: ["phase1"]
 
   # PHASE 2: Real-Time Streaming Producer
   # Uncomment this service during Phase 2
-  # producer-stream:
-  #   build: .
-  #   container_name: streaming-wars-producer-stream
-  #   command: python producer_streaming.py
-  #   depends_on:
-  #     redis:
-  #       condition: service_healthy
-  #   volumes:
-  #     - ./data:/data
-  #   environment:
-  #     - REDIS_HOST=redis
-  #     - STREAM_INTERVAL=60
-  #     - BACKFILL_HISTORICAL=false
-  #   profiles: ["phase2"]
+  producer-stream:
+     build: .
+     container_name: streaming-wars-producer-stream
+     command: python producer_streaming.py
+     depends_on:
+       redis:
+         condition: service_healthy
+     volumes:
+       - ./data:/data
+     environment:
+       - REDIS_HOST=redis
+       - STREAM_INTERVAL=3600
+       - BACKFILL_HISTORICAL=false
+     #profiles: ["phase2"]
 
   consumer:
     build: .

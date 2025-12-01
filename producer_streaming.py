@@ -24,34 +24,69 @@ IMDB_BASICS_FILE = os.getenv("IMDB_BASICS_FILE", os.path.join(DATA_DIR, "title.b
 
 # Streaming Configuration
 STREAM_INTERVAL = int(os.getenv("STREAM_INTERVAL", "60"))  # Poll every 60 seconds
-REALTIME_LOOKBACK = 7  # Days to look back for "recent" trends
+
+# --- CURATED TRACKING LIST (200 Shows) ---
+# Replaces dynamic loading to ensure high-value targets are tracked.
 TRACKED_SHOWS = [
-    # Netflix Originals & Popular Series
-    "Stranger Things", "The Crown", "Wednesday", "Squid Game", "Bridgerton",
-    "The Witcher", "Money Heist", "Dark", "Ozark", "Black Mirror",
-    # HBO/Max Hits
-    "House of the Dragon", "The Last of Us", "Succession", "Euphoria", "White Lotus",
-    # Amazon Prime
-    "The Boys", "Rings of Power", "Jack Ryan", "Reacher", "The Marvelous Mrs. Maisel",
-    # Disney+
-    "The Mandalorian", "Loki", "WandaVision", "Andor", "Ahsoka",
-    # Classic Must-Track
-    "Breaking Bad", "Game of Thrones", "The Office", "Friends", "The Sopranos",
-    # Recent Buzz Shows
-    "The Bear", "Wednesday", "You", "Dahmer", "1899",
-    # Anime
-    "Attack on Titan", "Demon Slayer", "My Hero Academia", "One Piece", "Death Note",
-    # Supplemental
-    "The Walking Dead", "Sherlock", "True Detective", "Firefly", "Band of Brothers",
-    "Chernobyl", "Dexter", "House of Cards", "Prison Break", "Lost", "Vikings",
-    "The Simpsons", "South Park", "Twin Peaks", "House"
+    # --- TIER 1: GLOBAL HITS & CULTURAL PHENOMENA ---
+    "Stranger Things", "Squid Game", "The Crown", "Bridgerton", "The Witcher",
+    "Money Heist", "Dark", "Ozark", "Black Mirror", "The Queen's Gambit",
+    "House of Cards", "Mindhunter", "Narcos", "Peaky Blinders", "Better Call Saul",
+    "Breaking Bad", "Friends", "The Office", "Seinfeld", "Community",
+    "Gilmore Girls", "Grey's Anatomy", "Supernatural", "NCIS", "Shameless",
+    "Attack on Titan", "Demon Slayer: Kimetsu no Yaiba", "One Piece", "Death Note",
+    "Hunter X Hunter (2011)", "Avatar: The Last Airbender", "Arcane", "Rick and Morty",
+    "BoJack Horseman", "Big Mouth", "Sex Education", "Emily in Paris", "Lupin",
+    "Shadow and Bone", "Sweet Tooth", "Cobra Kai", "Lucifer", "Manifest",
+    "You", "Ginny & Georgia", "Firefly Lane", "Outer Banks", "Virgin River",
+    "The Umbrella Academy", "Locke & Key",
+    
+    # --- TIER 2: CRITICALLY ACCLAIMED & POPULAR (2015-2021) ---
+    "Maid", "Midnight Mass", "Clickbait", "Sex/Life", "Sweet Magnolias",
+    "Never Have I Ever", "The Chair", "Halston", "The Serpent", "Behind Her Eyes",
+    "Fate: The Winx Saga", "Bling Empire", "Bridgerton", "Tiny Pretty Things",
+    "Dash & Lily", "The Haunting of Bly Manor", "Ratched", "Away", "Cursed",
+    "Warrior Nun", "Space Force", "Dead to Me", "Hollywood", "Into the Night",
+    "Unorthodox", "Tiger King", "Love Is Blind", "Ragnarok", "I Am Not Okay with This",
+    "Locke & Key", "The Stranger", "Dracula", "Messiah", "V Wars",
+    "The Politician", "Unbelievable", "The Spy", "Criminal: UK", "The I-Land",
+    "Wu Assassins", "Another Life", "Chambers", "Black Summer", "The Society",
+    "Bonding", "Special", "Quicksand", "Osmosis", "Turn Up Charlie",
+    "After Life", "Russian Doll", "Kingdom", "Tydying Up with Marie Kondo",
+    "Perfume", "Dogs of Berlin", "The Kominsky Method", "Bodyguard", "Maniac",
+    
+    # --- TIER 3: INTERNATIONAL & GENRE HITS ---
+    "Alice in Borderland", "Sweet Home", "The Uncanny Counter", "Vincenzo",
+    "Hometown Cha-Cha-Cha", "Itaewon Class", "Crash Landing on You", "Kingdom",
+    "Elite", "Cable Girls", "High Seas", "The House of Flowers", "Control Z",
+    "Dark Desire", "Who Killed Sara?", "3%", "The Rain", "Dark",
+    "Barbarians", "How to Sell Drugs Online (Fast)", "Biohackers", "Ragnarok",
+    "The Valhalla Murders", "Caliphate", "Fauda", "Shtisel", "Sacred Games",
+    "Delhi Crime", "Mirzapur", "Bard of Blood", "Betaal", "Jamtara",
+    
+    # --- TIER 4: HIGH VOLUME / LONG RUNNING ---
+    "The Great British Baking Show", "Paul Hollywood's Big Continental Road Trip",
+    "Comedians in Cars Getting Coffee", "My Next Guest Needs No Introduction",
+    "Patriot Act with Hasan Minhaj", "The Chef Show", "Nailed It!", "Sugar Rush",
+    "Queer Eye", "Selling Sunset", "Too Hot to Handle", "The Circle",
+    "Floor Is Lava", "Rhythm + Flow", "Dream Home Makeover", "Get Organized",
+    "Tiny House Nation", "Million Dollar Beach House", "Interior Design Masters",
+    "Amazing Interiors", "Instant Hotel", "Stay Here", "Restaurants on the Edge",
+    "Ugly Delicious", "Salt Fat Acid Heat", "Chef's Table", "Street Food",
+    "Taco Chronicles", "Flavorful Origins", "The Final Table", "Million Pound Menu",
+    
+    # --- TIER 5: LEGACY & LICENSED FAVORITES ---
+    "Downton Abbey", "Outlander", "The Good Place", "Schitt's Creek",
+    "Kim's Convenience", "Workin' Moms", "Call the Midwife", "Sherlock",
+    "Merlin", "The IT Crowd", "Broadchurch", "Happy Valley", "Luther",
+    "Bodyguard", "Collateral", "Giri / Haji", "Marcella", "The Fall",
+    "Top Boy", "Skins", "The Inbetweeners", "Derry Girls", "Crashing",
+    "The End of the F***ing World", "Atypical", "Everything Sucks!",
+    "I Am Not Okay With This", "Daybreak", "Insatiable", "The Order"
 ]
 
 def load_imdb_metadata() -> dict:
-    """
-    Load IMDb metadata for vote counts and ratings.
-    Returns dict mapping lowercase title to metadata.
-    """
+    """Load IMDb metadata for vote counts and ratings."""
     logging.info("Loading IMDb Metadata...")
     meta_map = {}
     
@@ -82,132 +117,88 @@ def load_imdb_metadata() -> dict:
         except Exception as e:
             logging.error(f"IMDb Load Failed: {e}")
     else:
-        logging.warning("IMDb files not found - using defaults")
+        logging.warning(f"IMDb files not found at {IMDB_RATINGS_FILE} - using defaults")
     
     return meta_map
 
 class StreamingTrendsFetcher:
     """
     Real-time streaming producer that polls Google Trends continuously.
-    Combines real-time trending data with tracked show monitoring.
     """
     
     def __init__(self, tracked_shows: List[str]):
+        # Increased timeout for robustness
         self.pytrends = TrendReq(hl='en-US', tz=360, timeout=(10, 25))
         self.tracked_shows = tracked_shows
-        self.last_values = {}  # Cache last known values for each show
+        self.last_values = {}
         
     def get_realtime_trends(self) -> List[str]:
-        """
-        Fetch real-time trending searches from Google Trends.
-        Returns list of currently trending terms.
-        """
         try:
             trending = self.pytrends.realtime_trending_searches(pn='US')
             if not trending.empty and 'title' in trending.columns:
-                trends = trending['title'].head(20).tolist()
-                logging.info(f"Found {len(trends)} real-time trending searches")
-                return trends
+                return trending['title'].head(20).tolist()
         except Exception as e:
             logging.warning(f"Failed to fetch real-time trends: {e}")
         return []
     
-    def get_current_interest(self, show_title: str) -> float:
-        """
-        Get current search interest for a specific show.
-        Uses last 7 days to get near-realtime data.
-        """
-        try:
-            # Use "now 7-d" timeframe for near-realtime data
-            self.pytrends.build_payload([show_title], cat=0, timeframe='now 7-d')
-            data = self.pytrends.interest_over_time()
-            
-            if not data.empty and show_title in data.columns:
-                # Get most recent value
-                latest_value = float(data[show_title].iloc[-1])
-                self.last_values[show_title] = latest_value
-                return latest_value
-            else:
-                # Return cached value if available
-                return self.last_values.get(show_title, 0.0)
-        except Exception as e:
-            logging.warning(f"Failed to fetch interest for {show_title}: {e}")
-            return self.last_values.get(show_title, 0.0)
-    
     def fetch_batch_interests(self, shows: List[str]) -> Dict[str, float]:
         """
         Fetch current interest for multiple shows efficiently.
-        Returns dict mapping show title to current hype score.
         """
         results = {}
-        # Process in small batches to avoid rate limits
+        # Batch size of 5 matches Google's comparison limit
         batch_size = 5
         
         for i in range(0, len(shows), batch_size):
             batch = shows[i:i + batch_size]
             try:
-                # Fetch interest for batch
-                self.pytrends.build_payload(batch, cat=0, timeframe='now 7-d')
-                data = self.pytrends.interest_over_time()
+                # ... (existing fetching code) ...
                 
-                if not data.empty:
-                    for show in batch:
-                        if show in data.columns:
-                            latest = float(data[show].iloc[-1])
-                            results[show] = latest
-                            self.last_values[show] = latest
-                        else:
-                            results[show] = self.last_values.get(show, 0.0)
+                # --- CHANGE 1: Increase Success Sleep ---
+                # Old: time.sleep(2)
+                # New: Sleep 10s between batches to stay under radar
+                time.sleep(10) 
                 
-                # Rate limiting
-                time.sleep(2)
             except Exception as e:
-                logging.warning(f"Failed to fetch batch {i}-{i+batch_size}: {e}")
-                # Use cached values
+                logging.warning(f"Failed to fetch batch {batch}: {e}")
+                # Use cached values on failure
                 for show in batch:
                     results[show] = self.last_values.get(show, 0.0)
-                time.sleep(5)
+                
+                # --- CHANGE 2: Increase Failure Backoff ---
+                # Old: time.sleep(10)
+                # New: Wait 30-60s if we get hit with a 429
+                logging.info("   ⚠️ Rate limit hit (429). Cooling down for 30s...")
+                time.sleep(30) 
         
         return results
 
-def stream_loop(imdb_map: dict, redis_conn: redis.Redis):
-    """
-    Main streaming loop - continuously polls Google Trends and pushes updates.
-    """
-    fetcher = StreamingTrendsFetcher(TRACKED_SHOWS)
+def stream_loop(imdb_map: dict, redis_conn: redis.Redis, shows: List[str]):
+    fetcher = StreamingTrendsFetcher(shows)
     iteration = 0
     
-    logging.info(f"🌊 Starting STREAMING mode - polling every {STREAM_INTERVAL}s")
-    logging.info(f"📺 Tracking {len(TRACKED_SHOWS)} shows")
+    logging.info(f"🌊 Starting STREAMING mode for {len(shows)} shows - polling every {STREAM_INTERVAL}s")
     
     while True:
         iteration += 1
-        logging.info(f"\n{'='*60}")
-        logging.info(f"🔄 Stream Iteration #{iteration} - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        logging.info(f"{'='*60}")
+        logging.info(f"\n{'='*40}")
+        logging.info(f"🔄 Stream Iteration #{iteration} - {datetime.now().strftime('%H:%M:%S')}")
         
         try:
-            # 1. Get real-time trending topics
+            # 1. Check what is trending globally (context)
             realtime_trends = fetcher.get_realtime_trends()
-            if realtime_trends:
-                logging.info(f"📈 Top Trending Now: {', '.join(realtime_trends[:5])}")
             
-            # 2. Fetch current interest for all tracked shows
-            logging.info(f"🔍 Fetching interest for {len(TRACKED_SHOWS)} tracked shows...")
-            current_interests = fetcher.fetch_batch_interests(TRACKED_SHOWS)
+            # 2. Update scores for OUR shows
+            current_interests = fetcher.fetch_batch_interests(shows)
             
-            # 3. Push updates to Redis queue
+            # 3. Push to Redis
             pipe = redis_conn.pipeline()
-            records_pushed = 0
             timestamp = int(time.time())
             
             for show_title, hype_score in current_interests.items():
-                # Get metadata
                 meta = imdb_map.get(show_title.lower().strip(), {})
                 brand_equity = meta.get("brand_equity", 0)
                 rating = meta.get("imdb_rating", 0.0)
-                
-                # Check if show is currently trending
                 is_trending = show_title in realtime_trends
                 
                 record = {
@@ -222,93 +213,24 @@ def stream_loop(imdb_map: dict, redis_conn: redis.Redis):
                         "netflix_hours": 0
                     }
                 }
-                
                 pipe.rpush(REDIS_QUEUE, json.dumps(record))
-                records_pushed += 1
-                
-                # Log high-interest shows
-                if hype_score > 50:
-                    status = "🔥 TRENDING" if is_trending else "📊 HIGH"
-                    logging.info(f"   {status}: {show_title} = {hype_score:.1f}")
             
             pipe.execute()
-            
-            logging.info(f"✅ Pushed {records_pushed} records to queue")
-            logging.info(f"💾 Queue depth: {redis_conn.llen(REDIS_QUEUE)}")
+            logging.info(f"✅ Updated {len(current_interests)} records")
             
         except Exception as e:
             logging.error(f"Stream iteration failed: {e}")
         
-        # Wait before next poll
-        logging.info(f"⏳ Sleeping {STREAM_INTERVAL}s until next poll...")
         time.sleep(STREAM_INTERVAL)
 
-def backfill_historical(imdb_map: dict, redis_conn: redis.Redis):
-    """
-    Optional: Backfill historical data for context before starting stream.
-    Fetches last 90 days of daily data for each tracked show.
-    """
-    logging.info("🔙 Starting historical backfill (last 90 days)...")
-    fetcher = TrendReq(hl='en-US', tz=360, timeout=(10, 25))
-    
-    for i, show in enumerate(TRACKED_SHOWS):
-        logging.info(f"[{i+1}/{len(TRACKED_SHOWS)}] Backfilling: {show}")
-        
-        try:
-            # Fetch last 90 days
-            fetcher.build_payload([show], cat=0, timeframe='today 3-m')
-            data = fetcher.interest_over_time()
-            
-            if not data.empty and show in data.columns:
-                meta = imdb_map.get(show.lower().strip(), {})
-                brand_equity = meta.get("brand_equity", 0)
-                rating = meta.get("imdb_rating", 0.0)
-                
-                pipe = redis_conn.pipeline()
-                for ts, row in data.iterrows():
-                    record = {
-                        "timestamp": int(ts.timestamp()),
-                        "title": show,
-                        "metrics": {
-                            "hype_score": float(row[show]),
-                            "brand_equity": brand_equity,
-                            "imdb_rating": rating,
-                            "is_trending": False,
-                            "cost_basis": 1,
-                            "netflix_hours": 0
-                        }
-                    }
-                    pipe.rpush(REDIS_QUEUE, json.dumps(record))
-                pipe.execute()
-                
-                logging.info(f"   ✅ Backfilled {len(data)} days")
-            
-            time.sleep(2)  # Rate limiting
-            
-        except Exception as e:
-            logging.warning(f"   ⚠️ Backfill failed for {show}: {e}")
-            time.sleep(5)
-    
-    logging.info("✅ Historical backfill complete!")
-
 def main():
-    """
-    Main entry point - runs backfill then starts streaming loop.
-    """
-    # Connect to Redis
     r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=0, decode_responses=True)
     
-    # Load IMDb metadata
+    # 1. Load Data
     imdb_map = load_imdb_metadata()
     
-    # Check if we should backfill
-    backfill_mode = os.getenv("BACKFILL_HISTORICAL", "true").lower() == "true"
-    
-    if backfill_mode:
-        backfill_historical(imdb_map, r)
-    
-    # Start streaming
-    stream_loop(imdb_map, r)
+    # 2. Start Streaming with Curated List
+    stream_loop(imdb_map, r, TRACKED_SHOWS)
 
 if __name__ == "__main__":
     main()

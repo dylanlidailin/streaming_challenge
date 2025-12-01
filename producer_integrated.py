@@ -18,59 +18,71 @@ REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
 REDIS_QUEUE = os.getenv("REDIS_QUEUE", "franchise_queue")
 
 DATA_DIR = os.getenv("DATA_DIR", "/data")
-NETFLIX_FILE = os.getenv("NETFLIX_FILE", os.path.join(DATA_DIR, "netflix_titles.csv"))
 IMDB_RATINGS_FILE = os.getenv("IMDB_RATINGS_FILE", os.path.join(DATA_DIR, "title.ratings.tsv.gz"))
 IMDB_BASICS_FILE = os.getenv("IMDB_BASICS_FILE", os.path.join(DATA_DIR, "title.basics.tsv.gz"))
 
-# Show selection configuration
-NUM_NETFLIX_SHOWS = int(os.getenv("NUM_SHOWS", "200"))
-# Increased default to 10s. MUST be set to 30s or more in .env for stability.
-SLEEP_BETWEEN_YEARS = int(os.getenv("SLEEP_BETWEEN_YEARS", "10")) 
-
-# --- RATE LIMIT FIX: Add a substantial delay between processing each show
+# Rate Limit Delay (Safe setting for 1 request per show)
 RATE_LIMIT_DELAY_SECONDS = 12
 
-# Manual supplemental shows list
-SUPPLEMENTAL_SHOWS = [
-    "The Walking Dead", "Sherlock", "Death Note", "True Detective", 
-    "Firefly", "Band of Brothers", "Chernobyl", "Dexter", "House of Cards", 
-    "Prison Break", "Lost", "Vikings", "The Simpsons", "South Park", 
-    "Twin Peaks", "House", "The Bear", "Succession", "Euphoria"
+# --- CURATED TRACKING LIST (200 Shows) ---
+# Identical to producer_streaming.py for consistency
+TRACKED_SHOWS = [
+    # --- TIER 1: GLOBAL HITS & CULTURAL PHENOMENA ---
+    "Stranger Things", "Squid Game", "The Crown", "Bridgerton", "The Witcher",
+    "Money Heist", "Dark", "Ozark", "Black Mirror", "The Queen's Gambit",
+    "House of Cards", "Mindhunter", "Narcos", "Peaky Blinders", "Better Call Saul",
+    "Breaking Bad", "Friends", "The Office", "Seinfeld", "Community",
+    "Gilmore Girls", "Grey's Anatomy", "Supernatural", "NCIS", "Shameless",
+    "Attack on Titan", "Demon Slayer: Kimetsu no Yaiba", "One Piece", "Death Note",
+    "Hunter X Hunter (2011)", "Avatar: The Last Airbender", "Arcane", "Rick and Morty",
+    "BoJack Horseman", "Big Mouth", "Sex Education", "Emily in Paris", "Lupin",
+    "Shadow and Bone", "Sweet Tooth", "Cobra Kai", "Lucifer", "Manifest",
+    "You", "Ginny & Georgia", "Firefly Lane", "Outer Banks", "Virgin River",
+    "The Umbrella Academy", "Locke & Key",
+    
+    # --- TIER 2: CRITICALLY ACCLAIMED & POPULAR (2015-2021) ---
+    "Maid", "Midnight Mass", "Clickbait", "Sex/Life", "Sweet Magnolias",
+    "Never Have I Ever", "The Chair", "Halston", "The Serpent", "Behind Her Eyes",
+    "Fate: The Winx Saga", "Bling Empire", "Bridgerton", "Tiny Pretty Things",
+    "Dash & Lily", "The Haunting of Bly Manor", "Ratched", "Away", "Cursed",
+    "Warrior Nun", "Space Force", "Dead to Me", "Hollywood", "Into the Night",
+    "Unorthodox", "Tiger King", "Love Is Blind", "Ragnarok", "I Am Not Okay with This",
+    "Locke & Key", "The Stranger", "Dracula", "Messiah", "V Wars",
+    "The Politician", "Unbelievable", "The Spy", "Criminal: UK", "The I-Land",
+    "Wu Assassins", "Another Life", "Chambers", "Black Summer", "The Society",
+    "Bonding", "Special", "Quicksand", "Osmosis", "Turn Up Charlie",
+    "After Life", "Russian Doll", "Kingdom", "Tydying Up with Marie Kondo",
+    "Perfume", "Dogs of Berlin", "The Kominsky Method", "Bodyguard", "Maniac",
+    
+    # --- TIER 3: INTERNATIONAL & GENRE HITS ---
+    "Alice in Borderland", "Sweet Home", "The Uncanny Counter", "Vincenzo",
+    "Hometown Cha-Cha-Cha", "Itaewon Class", "Crash Landing on You", "Kingdom",
+    "Elite", "Cable Girls", "High Seas", "The House of Flowers", "Control Z",
+    "Dark Desire", "Who Killed Sara?", "3%", "The Rain", "Dark",
+    "Barbarians", "How to Sell Drugs Online (Fast)", "Biohackers", "Ragnarok",
+    "The Valhalla Murders", "Caliphate", "Fauda", "Shtisel", "Sacred Games",
+    "Delhi Crime", "Mirzapur", "Bard of Blood", "Betaal", "Jamtara",
+    
+    # --- TIER 4: HIGH VOLUME / LONG RUNNING ---
+    "The Great British Baking Show", "Paul Hollywood's Big Continental Road Trip",
+    "Comedians in Cars Getting Coffee", "My Next Guest Needs No Introduction",
+    "Patriot Act with Hasan Minhaj", "The Chef Show", "Nailed It!", "Sugar Rush",
+    "Queer Eye", "Selling Sunset", "Too Hot to Handle", "The Circle",
+    "Floor Is Lava", "Rhythm + Flow", "Dream Home Makeover", "Get Organized",
+    "Tiny House Nation", "Million Dollar Beach House", "Interior Design Masters",
+    "Amazing Interiors", "Instant Hotel", "Stay Here", "Restaurants on the Edge",
+    "Ugly Delicious", "Salt Fat Acid Heat", "Chef's Table", "Street Food",
+    "Taco Chronicles", "Flavorful Origins", "The Final Table", "Million Pound Menu",
+    
+    # --- TIER 5: LEGACY & LICENSED FAVORITES ---
+    "Downton Abbey", "Outlander", "The Good Place", "Schitt's Creek",
+    "Kim's Convenience", "Workin' Moms", "Call the Midwife", "Sherlock",
+    "Merlin", "The IT Crowd", "Broadchurch", "Happy Valley", "Luther",
+    "Bodyguard", "Collateral", "Giri / Haji", "Marcella", "The Fall",
+    "Top Boy", "Skins", "The Inbetweeners", "Derry Girls", "Crashing",
+    "The End of the F***ing World", "Atypical", "Everything Sucks!",
+    "I Am Not Okay With This", "Daybreak", "Insatiable", "The Order"
 ]
-
-def load_shows_list() -> List[str]:
-    """Load shows from Netflix dataset + supplemental list."""
-    all_shows = []
-    
-    # Source 1: Netflix Dataset
-    if os.path.exists(NETFLIX_FILE):
-        try:
-            df = pd.read_csv(NETFLIX_FILE)
-            if "type" in df.columns:
-                tv = df[df["type"].str.lower().str.contains("tv", na=False)]
-                netflix_shows = tv["title"].dropna().unique().tolist()[:NUM_NETFLIX_SHOWS]
-                all_shows.extend(netflix_shows)
-                logging.info(f"Loaded {len(netflix_shows)} shows from Netflix dataset")
-        except Exception as e:
-            logging.error(f"Failed to load Netflix data: {e}")
-    else:
-        logging.warning(f"Netflix file not found, using supplemental shows only")
-    
-    # Source 2: Supplemental Shows
-    all_shows.extend(SUPPLEMENTAL_SHOWS)
-    logging.info(f"Added {len(SUPPLEMENTAL_SHOWS)} supplemental shows")
-    
-    # Deduplicate
-    seen = set()
-    unique_shows = []
-    for show in all_shows:
-        show_lower = show.lower().strip()
-        if show_lower not in seen:
-            seen.add(show_lower)
-            unique_shows.append(show)
-    
-    logging.info(f"Total unique shows to process: {len(unique_shows)}")
-    return unique_shows
 
 def load_imdb_metadata() -> dict:
     """Load IMDb metadata."""
@@ -112,16 +124,17 @@ class TrendsFetcher:
     """Fetches historical Google Trends data."""
     
     def __init__(self):
-        self.pytrends = TrendReq(hl='en-US', tz=360, timeout=(30, 60)) # Increased timeout for robustness
+        # Increased timeout for robustness
+        self.pytrends = TrendReq(hl='en-US', tz=360, timeout=(30, 60)) 
 
     def fetch_history(self, show_title: str) -> List[Dict]:
         """
         Fetches 5 years of data in ONE request.
         Returns WEEKLY data, which allows for consistent scaling across the full period.
         """
-        # We fetch the full 5-year range in one go.
-        # This forces Google to normalize 2020 vs 2024 correctly.
-        full_timeframe = '2020-01-01 2024-12-31'
+        # We start from 2021 to ensure the total range is <= 5 years, 
+        # which guarantees Google returns WEEKLY data points instead of Monthly.
+        full_timeframe = '2021-01-01 2025-12-31'
         
         all_data = []
         try:
@@ -136,7 +149,7 @@ class TrendsFetcher:
                         "hype_score": int(row[show_title])
                     })
             
-            # Since we only make 1 request per show now, a short sleep is sufficient
+            # Since we only make 1 request per show, a short sleep is sufficient
             time.sleep(2)
             
         except Exception as e:
@@ -171,7 +184,7 @@ def process_show(title: str, imdb_map: dict, fetcher: TrendsFetcher, redis_conn:
             pipe.rpush(REDIS_QUEUE, json.dumps(record))
         pipe.execute()
         
-        logging.info(f"   ✅ Pushed {len(history)} daily records for '{title}'")
+        logging.info(f"   ✅ Pushed {len(history)} weekly records for '{title}'")
         return True
     else:
         logging.warning(f"   ⚠️  No trend data found for '{title}'")
@@ -180,13 +193,15 @@ def process_show(title: str, imdb_map: dict, fetcher: TrendsFetcher, redis_conn:
 def main_loop():
     """Main producer loop."""
     r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=0, decode_responses=True)
-    shows = load_shows_list()
+    
+    # We now use the hardcoded list directly instead of reading CSV
+    shows = TRACKED_SHOWS
     imdb_map = load_imdb_metadata()
     fetcher = TrendsFetcher()
 
     logging.info(f"🚀 Starting PHASE 1: Historical Backfill for {len(shows)} shows...")
-    logging.info(f"📊 This will take a while. Each show requires ~5 API calls.")
-    logging.info(f"🐌 **RATE LIMITING FIX**: Sleeping for {RATE_LIMIT_DELAY_SECONDS}s between shows.")
+    logging.info(f"📊 Using curated list of 200 shows.")
+    logging.info(f"🐌 Sleeping for {RATE_LIMIT_DELAY_SECONDS}s between shows.")
     
     success_count = 0
     failure_count = 0
@@ -199,11 +214,9 @@ def main_loop():
             success_count += 1
         else:
             failure_count += 1
-
-        # --- FIX: Add substantial delay between shows ---
+        
         logging.info(f"    ...sleeping for {RATE_LIMIT_DELAY_SECONDS}s to respect Google Trends rate limits.")
-        time.sleep(RATE_LIMIT_DELAY_SECONDS)
-        # ----------------------------------------------
+        time.sleep(RATE_LIMIT_DELAY_SECONDS) 
     
     logging.info("=" * 60)
     logging.info("🎉 PHASE 1 COMPLETE!")
