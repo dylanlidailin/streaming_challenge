@@ -44,7 +44,7 @@ services:
        - ./data:/data
      environment:
        - REDIS_HOST=redis
-       - STREAM_INTERVAL=3600
+       - STREAM_INTERVAL=600
        - BACKFILL_HISTORICAL=false
      #profiles: ["phase2"]
 
